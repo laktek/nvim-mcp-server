@@ -118,10 +118,22 @@ Claude:
 
 ### Socket Discovery
 
-The server finds nvim sockets using:
-- **macOS:** `$TMPDIR/nvim*/0` (typically `/var/folders/.../T/nvim*/0`)
-- **Linux:** `$TMPDIR/nvim*/0` or `/tmp/nvim*/0`
-- Falls back to `/tmp` if `$TMPDIR` is not set
+The server finds nvim sockets by searching multiple locations:
+
+**Search Directories:**
+- `$TMPDIR` (or `/tmp` if not set)
+- `$XDG_RUNTIME_DIR` (if available)
+- `/run/user/$UID` (Linux systems)
+
+**Socket Patterns:**
+- **Direct sockets:** `nvim.{pid}.0` files in base directories
+- **Nested structure:** `nvim*/0/nvim.{pid}.0` (legacy format)
+- **Compatibility:** Supports both Neovim 0.10 and 0.11+ socket formats
+
+**Examples:**
+- **macOS:** `/var/folders/.../T/nvim.12345.0`
+- **Linux:** `/tmp/nvim.12345.0` or `/run/user/1000/nvim.12345.0`
+- **Legacy:** `/tmp/nvim.12345/0/nvim.12345.0`
 
 ## Benefits
 

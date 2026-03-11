@@ -64,6 +64,150 @@ describe('nvim-operations unit tests with mocks', () => {
       expect(Array.isArray(sockets)).toBe(true);
       expect(sockets).toHaveLength(0);
     });
+
+    describe('XDG_RUNTIME_DIR socket discovery', () => {
+      let originalXdgRuntimeDir;
+
+      beforeEach(() => {
+        originalXdgRuntimeDir = process.env.XDG_RUNTIME_DIR;
+      });
+
+      afterEach(() => {
+        if (originalXdgRuntimeDir === undefined) {
+          delete process.env.XDG_RUNTIME_DIR;
+        } else {
+          process.env.XDG_RUNTIME_DIR = originalXdgRuntimeDir;
+        }
+      });
+
+      it('should skip XDG scan when XDG_RUNTIME_DIR is not set', async () => {
+        delete process.env.XDG_RUNTIME_DIR;
+
+        fs.readdir.mockResolvedValueOnce([]); // TMPDIR empty
+
+        const { findNvimSockets } = await import('../lib/nvim-operations.js');
+        const sockets = await findNvimSockets();
+
+        expect(Array.isArray(sockets)).toBe(true);
+        expect(sockets).toHaveLength(0);
+        expect(fs.readdir).toHaveBeenCalledTimes(1);
+      });
+
+      it('should find flat nvim socket with dot separator in XDG_RUNTIME_DIR', async () => {
+        process.env.XDG_RUNTIME_DIR = '/run/user/1000';
+
+        fs.readdir
+          .mockResolvedValueOnce([]) // TMPDIR empty
+          .mockResolvedValueOnce([
+            { name: 'nvim.12345.0', isDirectory: () => false },
+            { name: 'unrelated.sock', isDirectory: () => false },
+          ]);
+        fs.access.mockResolvedValue(undefined);
+
+        const { findNvimSockets } = await import('../lib/nvim-operations.js');
+        const sockets = await findNvimSockets();
+
+        expect(sockets).toHaveLength(1);
+        expect(sockets[0]).toContain('nvim.12345.0');
+      });
+
+      it('should find flat nvim socket with dash separator in XDG_RUNTIME_DIR', async () => {
+        process.env.XDG_RUNTIME_DIR = '/run/user/1000';
+
+        fs.readdir
+          .mockResolvedValueOnce([]) // TMPDIR empty
+          .mockResolvedValueOnce([
+            { name: 'nvim-67890.0', isDirectory: () => false },
+          ]);
+        fs.access.mockResolvedValue(undefined);
+
+        const { findNvimSockets } = await import('../lib/nvim-operations.js');
+        const sockets = await findNvimSockets();
+
+        expect(sockets).toHaveLength(1);
+        expect(sockets[0]).toContain('nvim-67890.0');
+      });
+
+      it('should skip files not matching the nvim socket pattern in XDG_RUNTIME_DIR', async () => {
+        process.env.XDG_RUNTIME_DIR = '/run/user/1000';
+
+        fs.readdir
+          .mockResolvedValueOnce([]) // TMPDIR empty
+          .mockResolvedValueOnce([
+            { name: 'nvim.abc.0', isDirectory: () => false },   // non-numeric pid
+            { name: 'nvim.12345', isDirectory: () => false },    // missing .0 suffix
+            { name: 'vim.12345.0', isDirectory: () => false },   // wrong prefix
+            { name: 'other.sock', isDirectory: () => false },
+          ]);
+        fs.access.mockResolvedValue(undefined);
+
+        const { findNvimSockets } = await import('../lib/nvim-operations.js');
+        const sockets = await findNvimSockets();
+
+        expect(sockets).toHaveLength(0);
+      });
+
+      it('should skip directories in XDG_RUNTIME_DIR even if name matches pattern', async () => {
+        process.env.XDG_RUNTIME_DIR = '/run/user/1000';
+
+        fs.readdir
+          .mockResolvedValueOnce([]) // TMPDIR empty
+          .mockResolvedValueOnce([
+            { name: 'nvim.12345.0', isDirectory: () => true },
+          ]);
+
+        const { findNvimSockets } = await import('../lib/nvim-operations.js');
+        const sockets = await findNvimSockets();
+
+        expect(sockets).toHaveLength(0);
+      });
+
+      it('should skip inaccessible socket files in XDG_RUNTIME_DIR', async () => {
+        process.env.XDG_RUNTIME_DIR = '/run/user/1000';
+
+        fs.readdir
+          .mockResolvedValueOnce([]) // TMPDIR empty
+          .mockResolvedValueOnce([
+            { name: 'nvim.12345.0', isDirectory: () => false },
+          ]);
+        fs.access.mockRejectedValue(new Error('ENOENT'));
+
+        const { findNvimSockets } = await import('../lib/nvim-operations.js');
+        const sockets = await findNvimSockets();
+
+        expect(sockets).toHaveLength(0);
+      });
+
+      it('should handle readdir error in XDG_RUNTIME_DIR gracefully', async () => {
+        process.env.XDG_RUNTIME_DIR = '/run/user/1000';
+
+        fs.readdir
+          .mockResolvedValueOnce([]) // TMPDIR empty
+          .mockRejectedValueOnce(new Error('Permission denied')); // XDG readdir fails
+
+        const { findNvimSockets } = await import('../lib/nvim-operations.js');
+        const sockets = await findNvimSockets();
+
+        expect(Array.isArray(sockets)).toBe(true);
+        expect(sockets).toHaveLength(0);
+      });
+
+      it('should combine sockets from both TMPDIR and XDG_RUNTIME_DIR', async () => {
+        process.env.XDG_RUNTIME_DIR = '/run/user/1000';
+
+        fs.readdir
+          .mockResolvedValueOnce([{ name: 'nvim12345', isDirectory: () => true }]) // TMPDIR
+          .mockResolvedValueOnce([{ name: '0', isDirectory: () => true }])          // subdir
+          .mockResolvedValueOnce(['nvim.99999.0'])                                   // socket in subdir
+          .mockResolvedValueOnce([{ name: 'nvim.11111.0', isDirectory: () => false }]); // XDG flat socket
+        fs.access.mockResolvedValue(undefined);
+
+        const { findNvimSockets } = await import('../lib/nvim-operations.js');
+        const sockets = await findNvimSockets();
+
+        expect(sockets).toHaveLength(2);
+      });
+    });
   });
 
   describe('getNvimInstancesInCwd with mocks', () => {
